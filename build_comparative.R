@@ -117,10 +117,10 @@ H <- function(...) paste0(..., collapse = "")
 html <- H(
 '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">',
 '<meta name="viewport" content="width=device-width,initial-scale=1">',
-'<title>Comparative Valuation Analysis — earthUI · glmnetUI · mgcvUI</title>',
+'<title>Helendale MARS/GLR/GAM Comparative Analysis</title>',
 '<style>', css, '</style></head><body>',
-'<header><div class="wrap"><h1>Comparative Valuation Analysis</h1>',
-'<div class="sub">Subject: a residential submarket (location &amp; IDs withheld) &nbsp;·&nbsp; ',
+'<header><div class="wrap"><h1>Helendale MARS/GLR/GAM Comparative Analysis</h1>',
+'<div class="sub">Subject: Helendale, CA residential submarket (addresses &amp; transaction IDs withheld) &nbsp;·&nbsp; ',
 'Three regression engines &mdash; <b>earthUI</b> (MARS), <b>glmnetUI</b> ',
 '(elastic net), <b>mgcvUI</b> (GAM) &nbsp;·&nbsp; ', as.character(Sys.Date()),
 '</div></div></header><div class="wrap">',
