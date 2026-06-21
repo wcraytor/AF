@@ -1,7 +1,7 @@
 # Build a single comparative HTML paper from the three appraisal models.
 # Reads exact stats from the report_data.rds bundles (earth figures are the
 # confirmed format_summary() values, hardcoded to avoid loading the 499MB
-# earth result object). Emits AF/Comparative_Analysis.html.
+# earth result object). Emits AF/index.html.
 
 AF <- "/Volumes/Nvme_1/ClaudeCode/AF"
 setwd(AF)
@@ -316,9 +316,9 @@ sprintf('~%d', mgcv$n_obs), ' rows.</p>',
 'model’s <code>report_data.rds</code>.</div>',
 '</div></body></html>')
 
-writeLines(html, "Comparative_Analysis.html")
-cat("WROTE", file.path(AF, "Comparative_Analysis.html"),
-    "(", round(file.size("Comparative_Analysis.html")/1024,1), "KB )\n")
+writeLines(html, "index.html")
+cat("WROTE", file.path(AF, "index.html"),
+    "(", round(file.size("index.html")/1024,1), "KB )\n")
 cat(sprintf("values: earth %d  glmnet %d  mgcv %d  | CV: %.4f/%.4f/%.4f | range %.2f%%\n",
             val["earth"], val["glmnet"], val["mgcv"],
             earth$cv_r2, glmnet$cv_r2, mgcv$cv_r2, rng_pct))
