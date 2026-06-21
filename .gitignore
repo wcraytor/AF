@@ -1,0 +1,24 @@
+# =====================================================================
+# AF is publish-safe after excluding the items below.
+#
+# The model REPORTS (earth/glmnet/mgcv *.html) and PLOTS are KEPT/publishable:
+# verified free of addresses, MLS/transaction IDs, and parcel IDs. They contain
+# only aggregate model output (coefficients, equations, fit stats, effect
+# plots). Note: equations expose latitude/longitude *knot values* (region-level
+# aggregate, ~34.749) — not property-level data.
+# =====================================================================
+
+# macOS / scratch / Office lock files
+.DS_Store
+**/.DS_Store
+~$*
+**/~$*
+Comparative
+
+# --- Confidential / oversized: never commit --------------------------
+# Spreadsheets = comp-level MLS data (addresses, parcel/MLS IDs, prices)
+*.xlsx
+# RDS: the 477 MB earth result exceeds GitHub's 100 MB limit and stores the
+# raw x/y matrix; the report_data bundles are build artifacts not needed for
+# display. (Reports are self-contained HTML, so no rds is required to view.)
+*.rds

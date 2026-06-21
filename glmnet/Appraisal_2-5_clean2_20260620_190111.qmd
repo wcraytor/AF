@@ -1,0 +1,208 @@
+---
+title: "glmnetUI Model Report"
+format:
+  html:
+    toc: true
+    theme: flatly
+    mainfont: "Roboto Condensed"
+    html-math-method: katex
+    embed-resources: true
+    include-in-header:
+      text: |
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&display=swap');
+        body { font-family: 'Roboto Condensed', sans-serif; }
+        </style>
+  pdf:
+    toc: true
+    mainfont: "Roboto Condensed"
+    sansfont: "Roboto Condensed"
+    include-in-header:
+      text: |
+        \usepackage{unicode-math}
+        \setmathfont{Latin Modern Math}
+        \setmathfont{Roboto Condensed}[range=up/{num,latin,Latin}]
+        \setmathfont{Roboto Condensed}[range=it/{latin,Latin}]
+        \usepackage{longtable}
+        \usepackage{booktabs}
+        \usepackage{lscape}
+  docx:
+    toc: true
+    reference-doc: reference.docx
+params:
+  data_file: "report_data.rds"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+if (nzchar(params$data_file) && file.exists(params$data_file)) {
+  .assets <- readRDS(params$data_file)
+  .plots_dir <- file.path(dirname(params$data_file), "plots")
+  .has_assets <- dir.exists(.plots_dir) &&
+    length(list.files(.plots_dir)) > 0L
+} else {
+  stop("No data_file provided.")
+}
+
+fmt <- if (!is.null(knitr::pandoc_to())) knitr::pandoc_to() else "html"
+.plot_ext <- if (fmt == "latex") "pdf" else "png"
+
+include_plot <- function(name, width = 8, height = 5) {
+  if (.has_assets) {
+    f <- file.path(.plots_dir, paste0(name, ".", .plot_ext))
+    if (file.exists(f)) {
+      # Use relative path — plots/ is next to the QMD in the render dir.
+      # Absolute paths break in LaTeX (luatex prepends ./).
+      rel <- file.path("plots", paste0(name, ".", .plot_ext))
+      cat(sprintf("![](%s)\n\n", rel))
+    }
+  }
+}
+```
+
+## Dataset Description
+
+| Property | Value |
+|----------|-------|
+| Data file | `r .assets$data_file_name` |
+| Observations | `r .assets$n_obs` |
+| Response variable | `r .assets$response` |
+| Predictors | `r paste(.assets$predictors, collapse = ", ")` |
+| Purpose | `r .assets$purpose` |
+
+## Model Specification
+
+| Parameter | Value |
+|-----------|-------|
+| Alpha | `r .assets$alpha` |
+| Lambda | `r signif(.assets$lambda, 5)` |
+| Lambda selection | `r .assets$lambda_method` |
+| Family | `r .assets$family` |
+| Standardize | `r .assets$standardize` |
+| Relaxed | `r .assets$relaxed` |
+| Non-zero coefficients | `r .assets$n_nonzero` |
+| Total predictors in model | `r .assets$n_predictors` |
+
+## Results Summary
+
+| Metric | Value |
+|--------|-------|
+| R² | `r sprintf("%.4f", .assets$r_squared)` |
+| Adjusted R² | `r sprintf("%.4f", .assets$adj_r_squared)` |
+| Generalized R² | `r sprintf("%.4f", .assets$gen_r_squared)` |
+| CV R² | `r if (!is.na(.assets$cv_r_squared)) sprintf("%.4f", .assets$cv_r_squared) else "N/A"` |
+| RMSE | `r sprintf("%.2f", .assets$rmse)` |
+| MAE | `r sprintf("%.2f", .assets$mae)` |
+
+## Model Equation
+
+```{r equation, results='asis'}
+# `\small` is a text-mode command, invalid inside `$$...$$` math; it breaks
+# pandoc's LaTeX -> Word (OMML) conversion (raw LaTeX in the doc). Strip for
+# Word only. Emit as a standalone block (blank lines around `$$`) via cat so
+# the multi-line equation is parsed as display math in every format.
+.eq <- .assets$equation_latex
+if (identical(fmt, "docx")) {
+  .eq <- gsub("\\\\small", "", .eq)
+  # Drop any now-blank lines: a blank line inside `$$...$$` terminates the math
+  # block for pandoc and breaks the Word (OMML) conversion.
+  .lines <- strsplit(.eq, "\n", fixed = TRUE)[[1]]
+  .eq <- paste(.lines[nzchar(trimws(.lines))], collapse = "\n")
+}
+cat("\n$$\n", .eq, "\n$$\n\n", sep = "")
+```
+
+## Coefficients
+
+```{r coefficients}
+knitr::kable(.assets$coef_df, digits = 4)
+```
+
+## Variable Importance
+
+```{r importance-plot, results='asis'}
+include_plot("importance")
+```
+
+```{r importance-table}
+knitr::kable(.assets$importance_df, digits = 4)
+```
+
+## Contributions
+
+```{r contributions, results='asis'}
+contrib_names <- .assets$contrib_names
+for (vname in contrib_names) {
+  safe_name <- gsub("[^a-zA-Z0-9_]", "_", vname)
+  # Use a markdown heading with the variable name as inline code. Pandoc then
+  # escapes underscores/specials correctly for every format. Emitting raw
+  # LaTeX (\subsection{living_sqft}) breaks PDF with "Missing $ inserted".
+  cat(sprintf("\n### `%s`\n\n", vname))
+  is_int <- grepl(":", vname, fixed = TRUE)
+  if (is_int) {
+    # Interaction: scatter + heatmap + 3D persp
+    include_plot(paste0("contrib_", safe_name, "_scatter"))
+    include_plot(paste0("contrib_", safe_name, "_heatmap"))
+    include_plot(paste0("contrib_", safe_name, "_3d"))
+  } else {
+    include_plot(paste0("contrib_", safe_name))
+  }
+  cat("\n\n")
+}
+```
+
+## Correlation Matrix
+
+```{r correlation, results='asis'}
+include_plot("correlation")
+```
+
+## ANOVA Decomposition
+
+```{r anova}
+knitr::kable(.assets$anova_df, digits = 2)
+```
+
+## Diagnostics
+
+### Coefficient Path
+
+```{r coef-path, results='asis'}
+include_plot("coef_path")
+```
+
+### Cross-Validation Error
+
+```{r cv-error, results='asis'}
+include_plot("cv_error")
+```
+
+### Actual vs Predicted
+
+```{r actual-vs-predicted, results='asis'}
+include_plot("actual_vs_predicted")
+```
+
+### Residuals vs Fitted
+
+```{r residuals-vs-fitted, results='asis'}
+include_plot("residuals_vs_fitted")
+```
+
+### Normal Q-Q Plot
+
+```{r qq-plot, results='asis'}
+include_plot("qq")
+```
+
+## Model Output
+
+```{r model-output, comment=""}
+cat("== glmnet Model ==\n\n")
+print(.assets$model)
+```
+
+---
+
+*Report generated by [glmnetUI](https://github.com/wcraytor/glmnetUI) on `r Sys.time()`*

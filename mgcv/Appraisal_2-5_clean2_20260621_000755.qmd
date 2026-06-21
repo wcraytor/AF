@@ -1,0 +1,189 @@
+---
+title: "GAM Model Report"
+format:
+  html:
+    toc: true
+    theme: flatly
+    html-math-method: katex
+  pdf:
+    toc: true
+    papersize: letter
+    include-in-header:
+      text: |
+        \usepackage{longtable}
+        \usepackage{booktabs}
+  docx:
+    toc: true
+    reference-doc: reference.docx
+params:
+  data_file: "report_data.rds"
+  paper_size: "letter"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+# Resolve the assets payload: explicit param wins; else a sibling
+# report_data.rds (self-contained bundle), so `quarto render` works with no
+# external arguments.
+.data_file <- if (nzchar(params$data_file) && file.exists(params$data_file)) {
+  params$data_file
+} else if (file.exists("report_data.rds")) {
+  "report_data.rds"
+} else {
+  ""
+}
+
+.assets <- if (nzchar(.data_file)) readRDS(.data_file) else NULL
+result       <- .assets$result
+summary_info <- .assets$summary_info
+importance   <- .assets$importance
+equation       <- .assets$equation
+equation_latex <- .assets$equation_latex
+equation_defs  <- .assets$equation_defs
+summary_text   <- .assets$summary_text
+
+.plots_dir <- if (nzchar(.data_file)) file.path(dirname(.data_file), "plots") else "plots"
+if (!dir.exists(.plots_dir) && dir.exists("plots")) .plots_dir <- "plots"
+.has_assets <- dir.exists(.plots_dir) && length(list.files(.plots_dir)) > 0L
+
+fmt <- if (!is.null(knitr::pandoc_to())) knitr::pandoc_to() else "html"
+.plot_ext <- if (fmt == "latex") "pdf" else "png"
+
+# Include a pre-generated plot if it exists. For PDF use the relative path;
+# for HTML/Word embed as a data URI so the image travels with the file.
+include_plot <- function(name) {
+  f <- file.path(.plots_dir, paste0(name, ".", .plot_ext))
+  if (!file.exists(f)) return(invisible(NULL))
+  if (fmt == "latex") {
+    cat(sprintf("![](%s)\n\n", file.path("plots", paste0(name, ".", .plot_ext))))
+  } else {
+    cat(sprintf("![](%s)\n\n", knitr::image_uri(f)))
+  }
+  invisible(NULL)
+}
+```
+
+## Dataset & Model
+
+| Property | Value |
+|----------|-------|
+| Response | `r result$response` |
+| Predictors | `r paste(result$predictors, collapse = ", ")` |
+| Observations | `r summary_info$n_obs` |
+| Family | `r summary_info$family` |
+| Smoothing method | `r summary_info$method` |
+| Smooth terms | `r summary_info$n_smooths` |
+
+## Results Summary
+
+| Metric | Value |
+|--------|-------|
+| R-squared (adj) | `r sprintf("%.4f", summary_info$r_squared)` |
+| Deviance explained | `r sprintf("%.1f%%", 100 * summary_info$dev_explained)` |
+| `r if (!is.null(summary_info$cv_rsq)) "CV R-squared" else "CV R-squared (n/a)"` | `r if (!is.null(summary_info$cv_rsq)) sprintf("%.4f", summary_info$cv_rsq) else "—"` |
+| AIC | `r sprintf("%.1f", summary_info$aic)` |
+| BIC | `r if (is.finite(summary_info$bic)) sprintf("%.1f", summary_info$bic) else "—"` |
+
+## Model Equation
+
+```{r equation, results='asis'}
+if (!is.null(equation_latex) && nzchar(equation_latex)) {
+  # Display math, one term per line (aligned) so it never runs off the page.
+  cat("\n$$\n", equation_latex, "\n$$\n\n", sep = "")
+  if (length(equation_defs)) {
+    cat("**Smooth function definitions:**\n\n")
+    for (d in equation_defs) {
+      cat(sprintf("- $%s$ → `%s` — %s\n", d$fn, d$label, d$desc))
+    }
+    cat("\n")
+  }
+} else {
+  # Fallback: raw R formula in a code block.
+  cat("```\n", equation, "\n```\n", sep = "")
+}
+```
+
+## Smooth Terms
+
+```{r smooth-table}
+st <- summary_info$smooth_table
+if (nrow(st) > 0L) {
+  st$EDF <- round(st$EDF, 3); st$Ref.df <- round(st$Ref.df, 3)
+  st$F <- round(st$F, 3)
+  st$p_value <- format.pval(st$p_value, digits = 3, eps = 1e-4)
+  knitr::kable(st)
+} else cat("_No smooth terms._\n")
+```
+
+## Parametric Terms
+
+```{r param-table}
+pt <- summary_info$parametric_table
+if (nrow(pt) > 0L) {
+  pt$Estimate <- signif(pt$Estimate, 4); pt$Std_Error <- signif(pt$Std_Error, 4)
+  pt$t_value <- round(pt$t_value, 3)
+  pt$p_value <- format.pval(pt$p_value, digits = 3, eps = 1e-4)
+  knitr::kable(pt)
+} else cat("_No parametric terms._\n")
+```
+
+## Variable Importance
+
+```{r importance, results='asis'}
+include_plot("importance")
+```
+
+## Smooth Effects
+
+```{r smooths, results='asis'}
+# Smooth panels are split into page-sized chunks so each renders large.
+nch <- .assets$n_smooth_chunks
+if (is.null(nch) || nch < 1) {
+  include_plot("smooths")            # backward-compat (older bundles)
+} else {
+  for (i in seq_len(nch)) include_plot(paste0("smooths_", i))
+}
+```
+
+```{r per-term, results='asis'}
+specs <- result$smooth_specs
+if (!is.null(specs)) {
+  for (i in seq_along(specs)) {
+    sp <- specs[[i]]
+    if (identical(sp$type %||% "s", "linear")) next
+    lbl <- paste(sp$vars, collapse = " × ")
+    cat(sprintf("\n### %s\n\n", lbl))
+    include_plot(paste0("term_", i))
+  }
+}
+```
+
+## Predictor Correlations
+
+```{r correlation, results='asis'}
+include_plot("correlation")
+```
+
+## Diagnostics
+
+```{r diagnostics, results='asis'}
+include_plot("diagnostics")
+```
+
+### Actual vs Predicted
+
+```{r avp, results='asis'}
+include_plot("actual_vs_predicted")
+```
+
+## mgcv Summary
+
+```{r raw-summary, comment=""}
+cat(summary_text)
+```
+
+---
+
+*Report generated by mgcvUI on `r format(Sys.time())`.*

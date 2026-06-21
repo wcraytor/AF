@@ -1,0 +1,377 @@
+---
+title: "Earth Model Report"
+format:
+  html:
+    toc: true
+    theme: flatly
+    mainfont: "Roboto Condensed"
+    html-math-method: katex
+    include-in-header:
+      text: |
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&display=swap');
+        body { font-family: 'Roboto Condensed', sans-serif; }
+        </style>
+  pdf:
+    toc: true
+    mainfont: "Roboto Condensed"
+    sansfont: "Roboto Condensed"
+    include-in-header:
+      text: |
+        \usepackage{unicode-math}
+        \setmathfont{Latin Modern Math}
+        \setmathfont{Roboto Condensed}[range=up/{num,latin,Latin}]
+        \setmathfont{Roboto Condensed}[range=it/{latin,Latin}]
+        \usepackage{pdflscape}
+        \usepackage{longtable}
+        \usepackage{booktabs}
+  docx:
+    toc: true
+    reference-doc: reference.docx
+params:
+  data_file: "report_data.rds"
+  result_file: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+# Resolve assets path: explicit param wins; else fall back to a sibling
+# `report_data.rds` (so a self-contained bundle is renderable directly
+# via `quarto render` / `quarto preview` without external arguments).
+.data_file <- if (nzchar(params$data_file) && file.exists(params$data_file)) {
+                params$data_file
+              } else if (file.exists("report_data.rds")) {
+                "report_data.rds"
+              } else {
+                ""
+              }
+
+# Load pre-generated assets if available, otherwise fall back to computing
+if (nzchar(.data_file)) {
+  .assets <- readRDS(.data_file)
+  result <- .assets$result
+  summary_info <- .assets$summary_info
+  gf <- .assets$gf
+  multi <- .assets$multi
+  targets <- .assets$targets
+  .plots_dir <- file.path(dirname(.data_file), "plots")
+  if (.plots_dir == "./plots" || !nzchar(dirname(.data_file)) ||
+      identical(dirname(.data_file), ".")) {
+    .plots_dir <- "plots"
+  }
+  .has_assets <- dir.exists(.plots_dir) &&
+    length(list.files(.plots_dir)) > 0L
+} else if (nzchar(params$result_file) && file.exists(params$result_file)) {
+  # Legacy path: compute everything (slower)
+  library(earthUI)
+  library(ggplot2)
+  if (requireNamespace("sysfonts", quietly = TRUE) &&
+      requireNamespace("showtext", quietly = TRUE)) {
+    if (!"Roboto Condensed" %in% sysfonts::font_families()) {
+      tryCatch(
+        sysfonts::font_add_google("Roboto Condensed", "Roboto Condensed"),
+        error = function(e) NULL)
+    }
+    showtext::showtext_auto()
+    theme_set(theme_minimal(base_family = "Roboto Condensed"))
+  } else {
+    theme_set(theme_minimal(base_family = "sans"))
+  }
+  result <- readRDS(params$result_file)
+  summary_info <- earthUI::format_summary(result)
+  gf <- earthUI::list_g_functions(result)
+  multi <- isTRUE(summary_info$multi)
+  targets <- result$target
+  .has_assets <- FALSE
+  .assets <- NULL
+}
+
+fmt <- if (!is.null(knitr::pandoc_to())) knitr::pandoc_to() else "html"
+.plot_ext <- if (fmt == "latex") "pdf" else "png"
+
+# Helper: include a pre-generated plot or generate on-the-fly
+include_plot <- function(name, gen_expr, width = 8, height = 5,
+                         asis = FALSE) {
+  if (.has_assets) {
+    f <- file.path(.plots_dir, paste0(name, ".", .plot_ext))
+    if (file.exists(f)) {
+      if (asis) {
+        if (fmt == "latex") {
+          # PDF: use relative path (lualatex resolves from working dir)
+          rel <- file.path("plots", paste0(name, ".", .plot_ext))
+          cat(sprintf("![](%s)\n\n", rel))
+        } else {
+          # HTML/Word: embed as base64 data URI so image travels with the file
+          cat(sprintf("![](%s)\n\n", knitr::image_uri(f)))
+        }
+        return(invisible(NULL))
+      } else {
+        return(knitr::include_graphics(f))
+      }
+    }
+  }
+  eval(gen_expr)
+}
+```
+
+## Dataset Description
+
+| Property | Value |
+|----------|-------|
+| Observations | `r summary_info$n_obs` |
+| Target variable(s) | `r paste(targets, collapse = ", ")` |
+| Predictors used | `r paste(result$predictors, collapse = ", ")` |
+| Categorical predictors | `r if (length(result$categoricals) > 0) paste(result$categoricals, collapse = ", ") else "None"` |
+
+## Model Specification
+
+| Parameter | Value |
+|-----------|-------|
+| Degree | `r result$degree` |
+| Cross-validation | `r if (result$cv_enabled) "Yes (10-fold)" else "No"` |
+| Number of terms | `r summary_info$n_terms` |
+| Predictors in model | `r summary_info$n_predictors` |
+`r if (multi) paste0("| Response variables | ", length(targets), " |")`
+
+```{r interaction-matrix, results='asis', eval=result$degree >= 2 && !is.null(result$allowed_matrix)}
+mat <- result$allowed_matrix
+preds <- rownames(mat)
+n <- length(preds)
+
+# Build display matrix (Yes/No, diagonal = -)
+display <- matrix("", n, n, dimnames = list(preds, preds))
+for (i in seq_len(n)) {
+  for (j in seq_len(n)) {
+    display[i, j] <- if (i == j) "" else if (mat[i, j]) "\u2713" else "\u2014"
+  }
+}
+
+# Truncate long predictor names for compact display
+max_len <- if (n > 8) 12 else if (n > 5) 16 else 30
+short <- ifelse(nchar(preds) > max_len,
+                paste0(substr(preds, 1, max_len - 1), "\u2026"), preds)
+colnames(display) <- short
+rownames(display) <- short
+
+if (fmt == "latex") {
+  cat("\n\\newpage\n\\begin{landscape}\n")
+  cat("\\subsection{Allowed Interactions}\n\n")
+  cat("\\footnotesize\n")
+  print(knitr::kable(display, format = "latex", booktabs = TRUE))
+  cat("\n\\normalsize\n")
+  cat("\\end{landscape}\n\\newpage\n")
+} else if (fmt == "docx") {
+  # Start landscape section
+  cat('\n\n```{=openxml}\n')
+  cat('<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/>')
+  cat('<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>')
+  cat('</w:sectPr></w:pPr></w:p>\n')
+  cat('```\n\n')
+  cat("## Allowed Interactions\n\n")
+  print(knitr::kable(display, format = "pipe"))
+  cat('\n\n```{=openxml}\n')
+  cat('<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>')
+  cat('<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>')
+  cat('</w:sectPr></w:pPr></w:p>\n')
+  cat('```\n\n')
+} else {
+  # HTML: full-width with rotated column headers for large matrices
+  cat("\n## Allowed Interactions\n\n")
+  cat('<style>\n')
+  cat('.eui-matrix-wrap { overflow-x: auto; margin: 1em 0; }\n')
+  cat('.eui-matrix { border-collapse: collapse; font-size: 0.8em; }\n')
+  cat('.eui-matrix th, .eui-matrix td { border: 1px solid #ddd; padding: 3px 6px; text-align: center; }\n')
+  cat('.eui-matrix th.eui-rotate { height: 120px; white-space: nowrap; vertical-align: bottom; }\n')
+  cat('.eui-matrix th.eui-rotate > div { transform: rotate(-60deg); width: 1.5em; transform-origin: bottom left; margin-left: 50%; }\n')
+  cat('.eui-matrix td:first-child { text-align: left; font-weight: bold; white-space: nowrap; }\n')
+  cat('.eui-matrix .eui-check { color: #27ae60; font-weight: bold; }\n')
+  cat('.eui-matrix .eui-dash { color: #999; }\n')
+  cat('@media print { .eui-matrix-wrap { page-break-before: always; } @page { size: landscape; } }\n')
+  cat('</style>\n')
+  cat('<div class="eui-matrix-wrap">\n')
+  cat('<table class="eui-matrix">\n<thead><tr><th></th>')
+  for (j in seq_len(n)) {
+    cat(sprintf('<th class="eui-rotate"><div>%s</div></th>', preds[j]))
+  }
+  cat('</tr></thead>\n<tbody>\n')
+  for (i in seq_len(n)) {
+    cat(sprintf('<tr><td>%s</td>', preds[i]))
+    for (j in seq_len(n)) {
+      if (i == j) {
+        cat('<td></td>')
+      } else if (mat[i, j]) {
+        cat('<td class="eui-check">\u2713</td>')
+      } else {
+        cat('<td class="eui-dash">\u2014</td>')
+      }
+    }
+    cat('</tr>\n')
+  }
+  cat('</tbody></table>\n</div>\n')
+}
+```
+
+```{r single-response-results, results='asis', eval=!multi}
+cat("\n## Results Summary\n\n")
+cat("| Metric | Value |\n|--------|-------|\n")
+cat(sprintf("| R² | %.4f |\n", summary_info$r_squared))
+cat(sprintf("| GRSq | %.4f |\n", summary_info$grsq))
+cat(sprintf("| GCV | %.4f |\n", summary_info$gcv))
+cat(sprintf("| RSS | %.2f |\n", summary_info$rss))
+if (result$cv_enabled && !is.na(summary_info$cv_rsq)) {
+  cat(sprintf("| CV R² | %.4f |\n", summary_info$cv_rsq))
+}
+```
+
+```{r single-response-equation, results='asis', eval=!multi}
+cat("\n## Model Equation\n\n")
+eq <- if (!is.null(.assets)) .assets$equation else earthUI::format_model_equation(result)
+if (!is.null(knitr::pandoc_to()) && knitr::pandoc_to() == "docx") {
+  cat("$$\n", eq$latex_word, "\n$$\n")
+} else {
+  cat("$$\n", eq$latex_pdf, "\n$$\n")
+}
+```
+
+## Coefficients & Basis Functions
+
+```{r coefficients}
+knitr::kable(summary_info$coefficients, digits = 4)
+```
+
+## Variable Importance
+
+```{r importance-plot, fig.width=8, fig.height=5}
+include_plot("importance", quote(earthUI::plot_variable_importance(result)))
+```
+
+```{r importance-table}
+imp <- if (!is.null(.assets)) .assets$importance else earthUI::format_variable_importance(result)
+knitr::kable(imp, digits = 4)
+```
+
+```{r single-response-gfunctions, fig.width=8, fig.height=6, results='asis', eval=!multi}
+cat("\n## g-Function Contributions\n\n")
+for (i in seq_len(nrow(gf))) {
+  label <- gf$label[i]
+  if (gf$d[i] >= 2) label <- gsub(" ", " \u00d7 ", label)
+  cat(sprintf("\n### %s\n\n", label))
+  if (gf$d[i] >= 2) {
+    include_plot(paste0("gfunc_", i, "_persp"),
+                 quote(earthUI::plot_g_persp(result, i)), asis = TRUE)
+    cat("\n\n")
+  }
+  include_plot(paste0("gfunc_", i, "_contour"),
+               quote(earthUI::plot_g_contour(result, i)), asis = TRUE)
+  cat("\n\n")
+}
+```
+
+## Correlation Matrix
+
+```{r correlation-matrix, fig.width=10, fig.height=8}
+include_plot("correlation", quote(earthUI::plot_correlation_matrix(result)),
+             width = 10, height = 8)
+```
+
+```{r single-response-diagnostics, fig.width=8, fig.height=5, results='asis', eval=!multi}
+cat("\n## Diagnostics\n\n")
+cat("\n### Residuals vs Fitted\n\n")
+include_plot("residuals", quote(print(earthUI::plot_residuals(result))), asis = TRUE)
+cat("\n\n### Normal Q-Q Plot\n\n")
+include_plot("qq", quote(print(earthUI::plot_qq(result))), asis = TRUE)
+cat("\n\n### Actual vs Predicted\n\n")
+include_plot("actual_vs_predicted",
+             quote(print(earthUI::plot_actual_vs_predicted(result))), asis = TRUE)
+```
+
+```{r multi-response-sections, fig.width=8, fig.height=5, results='asis', eval=multi}
+eq <- if (!is.null(.assets)) .assets$equation else earthUI::format_model_equation(result)
+render_eq <- function(e) {
+  if (!is.null(knitr::pandoc_to()) && knitr::pandoc_to() == "docx") {
+    cat("$$\n", e$latex_word, "\n$$\n")
+  } else {
+    cat("$$\n", e$latex_pdf, "\n$$\n")
+  }
+}
+
+for (ri in seq_along(targets)) {
+  tgt <- targets[ri]
+  suffix <- paste0("_r", ri)
+  cat(sprintf("\n## Response: %s\n\n", tgt))
+
+  # --- Summary metrics ---
+  cat("\n### Summary\n\n")
+  cat("| Metric | Value |\n|--------|-------|\n")
+  cat(sprintf("| R² | %.4f |\n", summary_info$r_squared[ri]))
+  cat(sprintf("| GRSq | %.4f |\n", summary_info$grsq[ri]))
+  cat(sprintf("| GCV | %.4f |\n", summary_info$gcv[ri]))
+  cat(sprintf("| RSS | %.2f |\n", summary_info$rss[ri]))
+  if (result$cv_enabled && !is.na(summary_info$cv_rsq[ri])) {
+    cat(sprintf("| CV R² | %.4f |\n", summary_info$cv_rsq[ri]))
+  }
+  cat("\n")
+
+  # --- Equation ---
+  cat("\n### Model Equation\n\n")
+  render_eq(eq$equations[[ri]])
+  cat("\n")
+
+  # --- g-Function contributions ---
+  if (nrow(gf) > 0) {
+    cat("\n### g-Function Contributions\n\n")
+    for (i in seq_len(nrow(gf))) {
+      label <- gf$label[i]
+      if (gf$d[i] >= 2) label <- gsub(" ", " \u00d7 ", label)
+      cat(sprintf("\n#### %s\n\n", label))
+      if (gf$d[i] >= 2) {
+        include_plot(paste0("gfunc_", i, suffix, "_persp"),
+                     bquote(earthUI::plot_g_persp(result, .(i), response_idx = .(ri))), asis = TRUE)
+        cat("\n\n")
+      }
+      include_plot(paste0("gfunc_", i, suffix, "_contour"),
+                   bquote(p <- earthUI::plot_g_contour(result, .(i), response_idx = .(ri)); print(p)), asis = TRUE)
+      cat("\n\n")
+    }
+  }
+
+  # --- Diagnostics ---
+  cat("\n### Diagnostics\n\n")
+  cat("\n#### Residuals vs Fitted\n\n")
+  include_plot(paste0("residuals", suffix),
+               bquote(print(earthUI::plot_residuals(result, response_idx = .(ri)))), asis = TRUE)
+  cat("\n\n#### Normal Q-Q Plot\n\n")
+  include_plot(paste0("qq", suffix),
+               bquote(print(earthUI::plot_qq(result, response_idx = .(ri)))), asis = TRUE)
+  cat("\n\n#### Actual vs Predicted\n\n")
+  include_plot(paste0("actual_vs_predicted", suffix),
+               bquote(print(earthUI::plot_actual_vs_predicted(result, response_idx = .(ri)))), asis = TRUE)
+  cat("\n\n")
+}
+```
+
+## ANOVA Decomposition
+
+```{r anova}
+anova_df <- if (!is.null(.assets)) .assets$anova else earthUI::format_anova(result)
+knitr::kable(anova_df, digits = 4)
+```
+
+## Earth Output
+
+```{r earth-output, comment=""}
+model <- result$model
+cat("== Model ==\n\n")
+print(model)
+cat("\n\n== Summary ==\n\n")
+print(summary(model))
+if (!is.null(model$varmod)) {
+  cat("\n\n== Variance Model ==\n\n")
+  print(model$varmod)
+}
+```
+
+---
+
+*Report generated by [earthUI](https://github.com/wcraytor/earthUI) on `r Sys.time()`*
